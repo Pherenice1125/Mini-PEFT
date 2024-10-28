@@ -162,10 +162,11 @@ class LoraConfig(AdapterConfig):
 
     def export(self) -> Dict[str, any]:
         config = {}
-        if self.use_dora_:
-            config["use_dora"] = True
-        if self.use_rslora_:
-            config["use_rslora"] = True
+        # Dora and RSLora are fine-tuning methods that are not supported in this demo yet.
+        # if self.use_dora_:
+        #     config["use_dora"] = True
+        # if self.use_rslora_:
+        #     config["use_rslora"] = True
         config["bias"] = "none"
         config["peft_type"] = "LORA"
         config["r"] = self.lora_r_
