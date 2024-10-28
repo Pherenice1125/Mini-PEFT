@@ -136,3 +136,45 @@ class LoraConfig(AdapterConfig):
             assert isinstance(value, bool)
 
         return self
+    
+    @staticmethod
+    def from_config(config: Dict[str, any]) -> "LoraConfig":
+        lora_config = LoraConfig(**AdapterConfig.from_config(config).__dict__)
+        lora_config.use_dora_ = config.get("use_dora", False)
+        lora_config.use_rslora_ = config.get("use_rslora", False)
+        lora_config.lora_init_ = config.get("lora_init", "original")
+        lora_config.lora_r_ = config["r"]
+        lora_config.lora_alpha_ = config["lora_alpha"]
+        lora_config.lora_dropout_ = config["lora_dropout"]
+        lora_config.target_modules_ = copy.deepcopy(lora_target_modules)
+        if isinstance(config["target_modules"], List):
+            for target in config["target_modules"]:
+                if target in lora_target_modules:
+                    lora_config.target_modules_[target] = True
+        elif isinstance(config["target_modules"], Dict):
+            for target, value in config["target_modules"].items():
+                if target in lora_target_modules:
+                    lora_config.target_modules_[target] = value
+        else:
+            raise ValueError("broken config item: target_modules")
+
+        return lora_config
+
+    def export(self) -> Dict[str, any]:
+        config = {}
+        if self.use_dora_:
+            config["use_dora"] = True
+        if self.use_rslora_:
+            config["use_rslora"] = True
+        config["bias"] = "none"
+        config["peft_type"] = "LORA"
+        config["r"] = self.lora_r_
+        config["lora_alpha"] = self.lora_alpha_
+        config["lora_dropout"] = self.lora_dropout_
+        tgt_list = []
+        for target, value in self.target_modules_.items():
+            if value:
+                tgt_list.append(target)
+        config["target_modules"] = tgt_list
+
+        return config
