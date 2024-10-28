@@ -9,6 +9,7 @@ Tokens: TypeAlias = List[int]
 Labels: TypeAlias = List[int]
 Masks: TypeAlias = List[bool]
 
+
 @dataclass
 class Prompt:
     instruction: str = None
@@ -65,7 +66,9 @@ class LLMBatchConfig:
     batch_start_idx_: int = -1
     batch_end_idx_: int = -1
 
+
 # They're not a efficient_operator_factory anymore...
+
 
 @dataclass
 class LLMModelInput:
@@ -92,10 +95,10 @@ class AdapterConfig:
             adapter_name=config.get("name", None),
             task_name=config.get("task_name", None),
         )
-    
+
 
 lora_target_modules = {
-# Normally, we use Llama-2-7b or Gemma-2b as the pretrained models in this demo. They have a similar structure.
+    # Normally, we use Llama-2-7b or Gemma-2b as the pretrained models in this demo. They have a similar structure.
     "q_proj": False,
     "k_proj": False,
     "v_proj": False,
@@ -136,7 +139,7 @@ class LoraConfig(AdapterConfig):
             assert isinstance(value, bool)
 
         return self
-    
+
     @staticmethod
     def from_config(config: Dict[str, any]) -> "LoraConfig":
         lora_config = LoraConfig(**AdapterConfig.from_config(config).__dict__)
