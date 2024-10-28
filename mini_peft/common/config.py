@@ -104,3 +104,35 @@ lora_target_modules = {
     "down_proj": False,
     "up_proj": False,
 }
+
+
+class LoraConfig(AdapterConfig):
+    # Weight-Decomposed Low-Rank Adaptation
+    # use_dora_: bool = False
+    # Rank-Stabilized LoRA
+    # sets the adapter scaling factor to `alpha/math.sqrt(r)`
+    # use_rslora_: bool = False
+    # can be original or gaussian
+    lora_init_: str = "original"
+    lora_r_: int = None
+    lora_alpha_: int = None
+    lora_dropout_: float = None
+    target_modules_: Dict[str, bool] = None
+
+    def check(self) -> "LoraConfig":
+        # Dora and RSLora are fine-tuning methods that are not supported in this demo yet.
+        # assert isinstance(self.use_dora_, bool)
+        # assert isinstance(self.use_rslora_, bool)
+        assert isinstance(self.lora_init_, str) and self.lora_init_ in [
+            "original",
+            "gaussian",
+        ]
+        assert isinstance(self.lora_r_, int) and self.lora_r_ > 0
+        assert isinstance(self.lora_alpha_, int) and self.lora_alpha_ > 0
+        assert isinstance(self.lora_dropout_, float) and self.lora_dropout_ >= 0
+        assert isinstance(self.target_modules_, Dict)
+        for key, value in self.target_modules_.items():
+            assert isinstance(key, str) and len(key) > 0
+            assert isinstance(value, bool)
+
+        return self
