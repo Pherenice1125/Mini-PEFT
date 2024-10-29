@@ -300,3 +300,154 @@ class Lora(nn.Module):
     ) -> torch.Tensor:
         result_lora = self.lora_forward(hidden_states)
         return residual + result_lora.to(residual.dtype)
+    
+
+class Linear(nn.Module):
+    def __init__(self, base_layer: nn.Module, device: str):
+        super().__init__()
+
+        if not isinstance(base_layer, nn.Linear):
+            assert isinstance(base_layer, Linear8bitLt) or isinstance(
+                base_layer, Linear4bit
+            ), f"error type - {type(base_layer)}."
+        else:
+            base_layer.requires_grad_(False)
+
+        self.device_ = torch.device(device)
+        self.base_layer_ = base_layer.to(self.device_)
+        self.loras_: Dict[str, Lora] = {}
+        self.moes_: Dict[str, LLMMoeBlock] = {}
+
+        if isinstance(self.base_layer_, Linear4bit):
+            self.out_features_, self.in_features_ = (
+                self.base_layer_.out_features,
+                self.base_layer_.in_features,
+            )
+        else:
+            self.out_features_, self.in_features_ = self.base_layer_.weight.shape
+
+    def init_lora_weight(
+        self, lora_config: LoraConfig, lora_tensor=(None, None), adapter_name=None
+    ):
+        if adapter_name is None:
+            adapter_name = lora_config.adapter_name
+
+        if adapter_name not in self.loras_:
+            self.loras_[adapter_name] = Lora(
+                self.base_layer_,
+                (self.in_features_, self.out_features_),
+                lora_config,
+                self.device_,
+            )
+
+        self.loras_[adapter_name].reset_parameters(lora_tensor)
+
+    def _efficient_impl(
+        self, hidden_states: torch.Tensor, input_args: LLMModelInput
+    ) -> torch.Tensor:
+        # hidden_states shape is: batch_size * max_seq_len * dim
+        # result = hidden_states @ self.weight_.transpose(0, 1)
+        residual = self.base_layer_.forward(hidden_states)
+
+        if len(self.loras_) == 0:
+            return residual
+
+        # split the data and result
+        dropouts: List[float] = []
+        scalings: List[float] = []
+        loras: Tuple[torch.Tensor] = ()
+        for lora_config in input_args.batch_configs_:
+            adapter_name = lora_config.adapter_name_
+
+            if adapter_name not in self.loras_:
+                loras += (None, None)
+                dropouts.append(None)
+                scalings.append(None)
+                continue
+
+            loras += (
+                self.loras_[adapter_name].lora_a_.weight,
+                self.loras_[adapter_name].lora_b_.weight,
+            )
+            dropouts.append(self.loras_[adapter_name].dropout_.p)
+            scalings.append(self.loras_[adapter_name].scaling_)
+
+        have_dora = any(lora.use_dora_ for lora in self.loras_.values())
+
+        if have_dora:
+            lora_delta = torch.zeros_like(residual, dtype=torch.float32)
+            lora_delta = LoraFunction.apply(
+                lora_delta,
+                hidden_states.to(torch.float32),
+                input_args,
+                dropouts,
+                scalings,
+                *loras,
+            )
+            next_states = self._appy_dora(
+                residual.to(torch.float32), lora_delta, input_args
+            )
+        else:
+            next_states = LoraFunction.apply(
+                residual.to(torch.float32),
+                hidden_states.to(torch.float32),
+                input_args,
+                dropouts,
+                scalings,
+                *loras,
+            )
+
+        return next_states.to(hidden_states.dtype)
+
+    def _compatible_impl(
+        self, hidden_states: torch.Tensor, input_args: LLMModelInput
+    ) -> torch.Tensor:
+        # hidden_states shape is: batch_size * max_seq_len * dim
+        # result = hidden_states @ self.weight_.transpose(0, 1)
+        residual = self.base_layer_.forward(hidden_states)
+
+        if len(self.loras_) == 0:
+            return residual
+
+        next_states = executor.init_tensor(residual)
+        lora_range = get_range_tensor(hidden_states.device, hidden_states.shape[0])
+
+        for lora_config in input_args.batch_configs_:
+            adapter_name = lora_config.adapter_name_
+            start_idx = lora_config.batch_start_idx_
+            end_idx = lora_config.batch_end_idx_
+
+            if adapter_name in self.loras_:
+                fwd_fn = self.loras_[adapter_name].forward
+                kwargs = {}
+            elif adapter_name in self.moes_:
+                fwd_fn = self.moes_[adapter_name].forward
+                kwargs = {"lora_linear": self}
+            else:
+                executor.index_copy(
+                    next_states,
+                    0,
+                    lora_range[start_idx:end_idx],
+                    residual[start_idx:end_idx],
+                )
+                continue
+
+            lora_data = fwd_fn(
+                residual=residual[start_idx:end_idx],
+                hidden_states=hidden_states[start_idx:end_idx],
+                **kwargs,
+            )
+            executor.index_copy(
+                next_states, 0, lora_range[start_idx:end_idx], lora_data
+            )
+
+        return next_states
+
+    def forward(
+        self, hidden_states: torch.Tensor, input_args: LLMModelInput
+    ) -> torch.Tensor:
+        if input_args.efficient_operator_ and len(self.moes_) == 0:
+            return self._efficient_impl(hidden_states, input_args)
+        else:
+            return self._compatible_impl(hidden_states, input_args)
+
