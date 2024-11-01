@@ -13,5 +13,6 @@ __all__ = [
     "BasicMetric",
     "AutoMetric",
     "BasicTask",
+    "CommonSenseTask",
     "QuestionAnswerTask",
 ]
