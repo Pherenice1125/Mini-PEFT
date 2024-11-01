@@ -9,3 +9,6 @@ import torch
 from transformers.utils import is_flash_attn_2_available
 
 import mini_peft
+
+
+mini_peft.setup_logging("INFO")
